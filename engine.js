@@ -87,6 +87,74 @@
     return raceToForRound(match.round, totalRounds);
   }
 
+  // ---------- time-budget-aware race length for early rounds ----------
+  // Semifinal is always race-to-11 and the final is always race-to-21. The
+  // "early" rounds (everything before the semifinal) default to race-to-7,
+  // but if the field is small enough that race-to-11 for those rounds too
+  // would still plausibly fit the event's time budget, use 11 instead.
+  // These are rough, clearly-an-estimate numbers, not a promise.
+  const SECONDS_PER_POINT = 15;
+  const CHANGEOVER_SECONDS = 45;
+  const DEFAULT_EVENT_MINUTES = 90;
+
+  function estimatedMatchSeconds(target) {
+    return CHANGEOVER_SECONDS + target * SECONDS_PER_POINT;
+  }
+
+  function chooseEarlyRoundTarget(state, eventMinutes) {
+    const R = computeRounds(state);
+    if (R < 3) return 7; // no separate "early" tier below semifinal/final
+    let earlyMatches = 0;
+    for (let r = 1; r <= R - 2; r++) earlyMatches += Math.pow(2, R - r);
+    const semiMatches = 2;
+    const finalMatches = 1;
+    const totalSecondsWith = (earlyTarget) =>
+      earlyMatches * estimatedMatchSeconds(earlyTarget) +
+      semiMatches * estimatedMatchSeconds(11) +
+      finalMatches * estimatedMatchSeconds(21);
+    const budgetSeconds = (eventMinutes || DEFAULT_EVENT_MINUTES) * 60;
+    return totalSecondsWith(11) <= budgetSeconds ? 11 : 7;
+  }
+
+  function dynamicRaceToForRound(state, round, eventMinutes) {
+    const R = computeRounds(state);
+    const distanceFromFinal = R - round + 1;
+    if (distanceFromFinal <= 1) return 21;
+    if (distanceFromFinal === 2) return 11;
+    return chooseEarlyRoundTarget(state, eventMinutes);
+  }
+
+  function dynamicDisplayRaceTo(match, state, eventMinutes) {
+    if (match.frozenRaceTo != null) return match.frozenRaceTo;
+    return dynamicRaceToForRound(state, match.round, eventMinutes);
+  }
+
+  // ---------- deuce / win-by-2 with a sudden-death cap ----------
+  // Traditional table-tennis deuce: once the target is reached without a
+  // 2-point lead, play continues until someone is ahead by 2 — but that
+  // could in theory run forever, so each target has a cap where sudden
+  // death (win by just 1) takes over once BOTH players have reached it.
+  const DEUCE_CAP = { 7: 11, 11: 21, 21: 31 };
+  function capForTarget(target) {
+    return DEUCE_CAP[target] || target + 10;
+  }
+
+  // Returns { decided, winner: 'A'|'B'|null }. Stateless — safe to call after
+  // any arbitrary score edit, not just point-by-point play.
+  function matchOutcome(scoreA, scoreB, target) {
+    const cap = capForTarget(target);
+    const max = Math.max(scoreA, scoreB);
+    const min = Math.min(scoreA, scoreB);
+    const leader = scoreA === scoreB ? null : scoreA > scoreB ? "A" : "B";
+    if (min >= cap) {
+      return { decided: max > min, winner: max > min ? leader : null };
+    }
+    if (max >= target) {
+      return { decided: max - min >= 2, winner: max - min >= 2 ? leader : null };
+    }
+    return { decided: false, winner: null };
+  }
+
   // ---------- round-1 pairing from the queue ----------
 
   function tryFormMatches(state) {
@@ -144,6 +212,49 @@
     m.frozenRaceTo = 0;
     state.matches.push(m);
     propagateWinner(state, m);
+    return { ok: true };
+  }
+
+  // Players who lost a locked match and aren't currently active anywhere
+  // else (queue or an unplayed match) — eligible to be pulled back in as a
+  // substitute opponent instead of handing someone a free bye.
+  function eligibleForReplay(state) {
+    const active = new Set();
+    state.queue.forEach((p) => active.add(p.id));
+    state.matches.forEach((m) => {
+      if (!m.locked) {
+        if (m.playerA && !isBye(m.playerA)) active.add(m.playerA.id);
+        if (m.playerB && !isBye(m.playerB)) active.add(m.playerB.id);
+      }
+    });
+    const seen = new Set();
+    const eliminated = [];
+    state.matches.forEach((m) => {
+      if (m.locked && m.winner) {
+        const loser = m.winner === "A" ? m.playerB : m.playerA;
+        if (loser && !isBye(loser) && !active.has(loser.id) && !seen.has(loser.id)) {
+          seen.add(loser.id);
+          eliminated.push(loser);
+        }
+      }
+    });
+    return eliminated;
+  }
+
+  // Instead of giving the lone waiting player a free bye, bring back an
+  // eliminated player as a real opponent so a match actually gets played.
+  function replayBye(state, waitingPlayerId, eliminatedPlayerId) {
+    if (state.queue.length !== 1 || state.queue[0].id !== waitingPlayerId) {
+      return { ok: false, reason: "This is only available while a single player is waiting alone." };
+    }
+    const candidate = eligibleForReplay(state).find((p) => p.id === eliminatedPlayerId);
+    if (!candidate) {
+      return { ok: false, reason: "That player isn't available to play again." };
+    }
+    const waitingPlayer = state.queue.shift();
+    const replacement = { id: uid("p"), name: candidate.name, checkedInAt: Date.now() };
+    state.queue.push(waitingPlayer, replacement);
+    tryFormMatches(state);
     return { ok: true };
   }
 
@@ -225,7 +336,7 @@
 
   // ---------- scoring ----------
 
-  function scorePoint(state, round, slot, side, delta) {
+  function scorePoint(state, round, slot, side, delta, eventMinutes) {
     const m = findMatch(state, round, slot);
     if (!m) return { ok: false, reason: "Match not found." };
     if (m.locked) return { ok: false, reason: "Match is locked — unlock it first." };
@@ -233,10 +344,24 @@
     const key = side === "A" ? "scoreA" : "scoreB";
     m[key] = Math.max(0, m[key] + delta);
     if (m.frozenRaceTo == null && (m.scoreA > 0 || m.scoreB > 0)) {
-      m.frozenRaceTo = raceToForRound(m.round, computeRounds(state));
+      m.frozenRaceTo = dynamicRaceToForRound(state, m.round, eventMinutes);
     }
     m.status = m.scoreA === 0 && m.scoreB === 0 ? "ready" : "in-progress";
-    return { ok: true };
+
+    let autoLocked = false;
+    let winnerName = null;
+    if (m.frozenRaceTo != null) {
+      const outcome = matchOutcome(m.scoreA, m.scoreB, m.frozenRaceTo);
+      if (outcome.decided) {
+        m.locked = true;
+        m.winner = outcome.winner;
+        m.status = "locked";
+        propagateWinner(state, m);
+        autoLocked = true;
+        winnerName = (outcome.winner === "A" ? m.playerA : m.playerB).name;
+      }
+    }
+    return { ok: true, autoLocked, winnerName };
   }
 
   // ---------- removal ----------
@@ -416,12 +541,18 @@
     addPlayer,
     removePlayer,
     giveBye,
+    eligibleForReplay,
+    replayBye,
     scorePoint,
     lockMatch,
     unlockMatch,
     computeRounds,
     raceToForRound,
     displayRaceTo,
+    dynamicRaceToForRound,
+    dynamicDisplayRaceTo,
+    capForTarget,
+    matchOutcome,
     findMatch,
     rosterView,
     generatePresetBracket,

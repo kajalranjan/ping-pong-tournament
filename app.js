@@ -190,10 +190,13 @@
       return;
     }
     const presetNames = parseNames(document.getElementById("input-preset-names").value);
+    const eventMinutesRaw = parseInt(document.getElementById("input-event-minutes").value, 10);
+    const eventMinutes = Number.isFinite(eventMinutesRaw) && eventMinutesRaw > 0 ? eventMinutesRaw : 90;
     const t = {
       id: Engine.uid("t"),
       name,
       createdAt: Date.now(),
+      eventMinutes,
       presetNames,
       presetBracket: presetNames.length >= 2 ? Engine.generatePresetBracket(presetNames) : { rounds: 0, matches: [] },
       dynamic: Engine.createDynamicState(),
@@ -273,6 +276,22 @@
     renderTournament();
   });
 
+  document.getElementById("btn-replay-bye").addEventListener("click", () => {
+    const t = getCurrent();
+    if (!t || t.dynamic.queue.length !== 1) return;
+    const select = document.getElementById("select-replay-player");
+    const chosenId = select.value;
+    if (!chosenId) return;
+    const res = Engine.replayBye(t.dynamic, t.dynamic.queue[0].id, chosenId);
+    if (!res.ok) {
+      toast(res.reason);
+      return;
+    }
+    persist();
+    renderTournament();
+    toast("They're back in — match created.");
+  });
+
   const STATUS_LABELS = {
     "waiting-for-opponent": "Waiting",
     "ready-to-play": "Ready",
@@ -328,11 +347,21 @@
     document.getElementById("checkin-count-hint").textContent = rows.length + " checked in";
 
     const byeBanner = document.getElementById("bye-banner");
+    const replayRow = document.getElementById("replay-row");
     if (t.dynamic.queue.length === 1) {
       byeBanner.classList.remove("hidden");
       document.getElementById("bye-banner-text").textContent = `${t.dynamic.queue[0].name} is waiting alone for an opponent.`;
+      const candidates = Engine.eligibleForReplay(t.dynamic);
+      if (candidates.length > 0) {
+        replayRow.classList.remove("hidden");
+        const select = document.getElementById("select-replay-player");
+        select.innerHTML = candidates.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
+      } else {
+        replayRow.classList.add("hidden");
+      }
     } else {
       byeBanner.classList.add("hidden");
+      replayRow.classList.add("hidden");
     }
   }
 
@@ -355,7 +384,7 @@
 
     for (let round = 1; round <= R; round++) {
       const slotsInRound = Math.pow(2, R - round);
-      const raceTo = Engine.raceToForRound(round, R);
+      const raceTo = Engine.dynamicRaceToForRound(t.dynamic, round, t.eventMinutes);
       const roundCol = document.createElement("div");
       roundCol.className = "bracket-round";
       const title = round === R ? "Final" : round === R - 1 ? "Semifinal" : `Round ${round}`;
@@ -365,7 +394,7 @@
 
       for (let slot = 0; slot < slotsInRound; slot++) {
         const m = Engine.findMatch(t.dynamic, round, slot);
-        matchesWrap.appendChild(renderMatchCard(m, round, slot, R));
+        matchesWrap.appendChild(renderMatchCard(m, round, slot, t));
       }
       roundCol.appendChild(matchesWrap);
       container.appendChild(roundCol);
@@ -378,7 +407,7 @@
     return p.name;
   }
 
-  function renderMatchCard(m, round, slot, totalRounds) {
+  function renderMatchCard(m, round, slot, t) {
     const card = document.createElement("div");
     const hasMatch = !!m && m.status !== "abandoned";
     const playerA = hasMatch ? m.playerA : null;
@@ -400,7 +429,9 @@
     const aWin = hasMatch && m.locked && m.winner === "A";
     const bWin = hasMatch && m.locked && m.winner === "B";
 
-    const raceTo = hasMatch ? Engine.displayRaceTo(m, totalRounds) : Engine.raceToForRound(round, totalRounds);
+    const raceTo = hasMatch
+      ? Engine.dynamicDisplayRaceTo(m, t.dynamic, t.eventMinutes)
+      : Engine.dynamicRaceToForRound(t.dynamic, round, t.eventMinutes);
     const scoreA = hasMatch && (m.status === "in-progress" || m.locked) ? m.scoreA : null;
     const scoreB = hasMatch && (m.status === "in-progress" || m.locked) ? m.scoreB : null;
 
@@ -477,9 +508,12 @@
       return;
     }
     const R = Engine.computeRounds(t.dynamic);
-    const raceTo = Engine.displayRaceTo(m, R);
+    const raceTo = Engine.dynamicDisplayRaceTo(m, t.dynamic, t.eventMinutes);
     const title = round === R ? "Final" : round === R - 1 ? "Semifinal" : `Round ${round}`;
     document.getElementById("score-round-label").textContent = `${title} · Race to ${raceTo}`;
+    const cap = Engine.capForTarget(raceTo);
+    document.getElementById("score-deuce-hint").textContent =
+      `Win by 2 once you hit ${raceTo}. Deadlocked at ${cap}-${cap}? Next point wins.`;
 
     const infoView = document.getElementById("score-info-view");
     const playView = document.getElementById("score-play-view");
@@ -492,6 +526,7 @@
       infoView.classList.remove("hidden");
       playView.classList.add("hidden");
       footer.classList.add("hidden");
+      document.getElementById("score-deuce-hint").classList.add("hidden");
       const winner = m.winner === "A" ? m.playerA : m.playerB;
       const reason = m.forfeit && !Engine.isBye(m.playerA) && !Engine.isBye(m.playerB)
         ? "the opponent left before this match was played"
@@ -506,6 +541,7 @@
     infoView.classList.add("hidden");
     playView.classList.remove("hidden");
     footer.classList.remove("hidden");
+    document.getElementById("score-deuce-hint").classList.remove("hidden");
 
     document.getElementById("name-a").textContent = playerLabel(m.playerA);
     document.getElementById("name-b").textContent = playerLabel(m.playerB);
@@ -549,7 +585,7 @@
       const t = getCurrent();
       if (!t || !currentModal) return;
       const { round, slot } = currentModal;
-      const res = Engine.scorePoint(t.dynamic, round, slot, btn.dataset.side, parseInt(btn.dataset.delta, 10));
+      const res = Engine.scorePoint(t.dynamic, round, slot, btn.dataset.side, parseInt(btn.dataset.delta, 10), t.eventMinutes);
       if (!res.ok) {
         toast(res.reason);
         return;
@@ -558,6 +594,9 @@
       renderScoreModal();
       renderDynamicBracket(t);
       renderCheckin(t);
+      if (res.autoLocked) {
+        toast(`${res.winnerName} wins! Match locked automatically.`);
+      }
     });
   });
 

@@ -35,6 +35,10 @@
         <label class="field-label" for="input-preset-names">Interest form names <span class="subtle">(one per line — used only for the reference bracket)</span></label>
         <textarea id="input-preset-names" rows="8" placeholder="Alex Kim&#10;Jordan Lee&#10;Sam Patel&#10;..." class="text-input textarea"></textarea>
         <p class="hint" id="preset-count-hint">0 names</p>
+
+        <label class="field-label" for="input-event-minutes">Time available for the event (minutes)</label>
+        <input id="input-event-minutes" type="number" min="10" step="5" value="90" class="text-input" style="max-width: 140px;" />
+        <p class="hint">Used to decide whether early rounds can afford race-to-11 instead of race-to-7. It's an estimate, not a promise.</p>
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" data-close-modal="modal-create">Cancel</button>
@@ -76,8 +80,14 @@
             <button type="submit" class="btn btn-primary">Add</button>
           </form>
           <div id="bye-banner" class="bye-banner hidden">
-            <span id="bye-banner-text"></span>
-            <button id="btn-give-bye" class="btn btn-sm btn-secondary">Give bye</button>
+            <div class="bye-banner-row">
+              <span id="bye-banner-text"></span>
+              <button id="btn-give-bye" class="btn btn-sm btn-secondary">Give bye</button>
+            </div>
+            <div id="replay-row" class="bye-banner-row replay-row hidden">
+              <select id="select-replay-player" class="text-input btn-sm"></select>
+              <button id="btn-replay-bye" class="btn btn-sm btn-secondary">Let them play instead</button>
+            </div>
           </div>
           <p class="hint" id="checkin-count-hint">0 checked in</p>
         </div>
@@ -101,6 +111,7 @@
       <div class="modal-header">
         <div>
           <div id="score-round-label" class="score-round-label">Round 1 · Race to 7</div>
+          <div id="score-deuce-hint" class="score-deuce-hint"></div>
           <div id="score-status-badge" class="status-badge hidden"></div>
         </div>
         <button class="icon-btn" data-close-modal="modal-score" aria-label="Close">✕</button>

@@ -106,15 +106,16 @@ const soloAdvanced = E.findMatch(s2, 2, 0);
 assert(soloAdvanced && soloAdvanced.playerA && soloAdvanced.playerA.name === "Solo", "Solo should propagate to round2");
 
 // --- Scenario 7: unlock refuses when downstream already locked ---
+// (scorePoint now auto-locks once the deuce/cap outcome is decided, so a
+// decisive score is enough — no separate explicit lockMatch call needed.)
 let s3 = E.createDynamicState();
 ["P1", "P2", "P3", "P4"].forEach((n) => E.addPlayer(s3, n));
-E.scorePoint(s3, 1, 0, "A", 11);
-E.lockMatch(s3, 1, 0); // P1 beats P2
-E.scorePoint(s3, 1, 1, "A", 11);
-E.lockMatch(s3, 1, 1); // P3 beats P4
-E.scorePoint(s3, 2, 0, "A", 21);
-let r2lock = E.lockMatch(s3, 2, 0); // P1 beats P3 in "final"
-assert(r2lock.ok, "round2 lock should succeed: " + JSON.stringify(r2lock));
+E.scorePoint(s3, 1, 0, "A", 11); // P1 beats P2, 11-0 (race to 11, decisive)
+assert(E.findMatch(s3, 1, 0).locked, "round1 slot0 should auto-lock at 11-0");
+E.scorePoint(s3, 1, 1, "A", 11); // P3 beats P4
+assert(E.findMatch(s3, 1, 1).locked, "round1 slot1 should auto-lock at 11-0");
+E.scorePoint(s3, 2, 0, "A", 21); // P1 beats P3 in the final, 21-0 (decisive)
+assert(E.findMatch(s3, 2, 0).locked, "round2 (final) should auto-lock at 21-0");
 let unlockAttempt = E.unlockMatch(s3, 1, 0);
 assert(unlockAttempt.ok === false, "should refuse to unlock round1 match once round2 already used its result");
 
@@ -131,5 +132,76 @@ const r1 = preset.matches.filter((m) => m.round === 1);
 assert(r1.length === 4, "round1 of preset bracket should have 4 matches for size-8 bracket");
 const byeCount = r1.filter((m) => m.isByeA || m.isByeB).length;
 assert(byeCount === 1, "should be exactly 1 bye match for 7 names in an 8-bracket, got " + byeCount);
+
+// --- Scenario 9: deuce/cap win detection ---
+// race to 7, cap 11: normal win by 2 at or above target
+let o = E.matchOutcome(7, 5, 7);
+assert(o.decided && o.winner === "A", "7-5 should be a decided win for A (2+ lead at target)");
+o = E.matchOutcome(7, 6, 7);
+assert(!o.decided, "7-6 should NOT be decided yet (only 1 ahead, deuce)");
+o = E.matchOutcome(6, 6, 7);
+assert(!o.decided, "6-6 should not be decided (tied)");
+o = E.matchOutcome(8, 6, 7);
+assert(o.decided && o.winner === "A", "8-6 should be a decided deuce win (2 ahead, past target)");
+o = E.matchOutcome(11, 10, 7);
+assert(!o.decided, "11-10 should NOT be decided yet — cap (11) reached by only one side, still need the other to reach it too... actually rule is min>=cap");
+o = E.matchOutcome(10, 10, 7);
+assert(!o.decided, "10-10 not decided, still normal deuce (below cap)");
+o = E.matchOutcome(11, 11, 7);
+assert(!o.decided, "11-11 (both at cap) not decided yet — next point wins");
+o = E.matchOutcome(12, 11, 7);
+assert(o.decided && o.winner === "A", "12-11 should be decided — sudden death after both hit the cap");
+assert(E.capForTarget(7) === 11, "cap for 7 should be 11");
+assert(E.capForTarget(11) === 21, "cap for 11 should be 21");
+assert(E.capForTarget(21) === 31, "cap for 21 should be 31");
+
+// --- Scenario 10: scorePoint auto-locks once the deuce/cap outcome is decided ---
+let s4 = E.createDynamicState();
+["Q1", "Q2"].forEach((n) => E.addPlayer(s4, n)); // R=1, single match = the final (race to 21)
+E.scorePoint(s4, 1, 0, "A", 21);
+let final = E.findMatch(s4, 1, 0);
+assert(final.locked && final.winner === "A", "match should auto-lock once 21 is reached with a clear lead");
+assert(E.scorePoint(s4, 1, 0, "A", 1).ok === false, "scoring a locked match should be refused");
+
+// deuce path: score to 20-20 then confirm no auto-lock until a real decision
+let s5 = E.createDynamicState();
+["R1", "R2"].forEach((n) => E.addPlayer(s5, n));
+E.scorePoint(s5, 1, 0, "A", 20);
+E.scorePoint(s5, 1, 0, "B", 20);
+let deuceMatch = E.findMatch(s5, 1, 0);
+assert(!deuceMatch.locked, "20-20 in a race-to-21 (cap 31) should still be playing, not locked");
+E.scorePoint(s5, 1, 0, "A", 1); // 21-20
+assert(!E.findMatch(s5, 1, 0).locked, "21-20 should not lock — only a 1-point lead past target, deuce continues");
+E.scorePoint(s5, 1, 0, "A", 1); // 22-20
+assert(E.findMatch(s5, 1, 0).locked, "22-20 should lock — 2-point lead past target");
+
+// --- Scenario 11: time-budget-aware early round target ---
+// A tiny field (8 players -> R=3) should easily afford race-to-11 early rounds within 90 minutes.
+let s6 = E.createDynamicState();
+for (let i = 0; i < 8; i++) E.addPlayer(s6, "P" + i);
+const smallFieldEarly = E.dynamicRaceToForRound(s6, 1, 90);
+assert(smallFieldEarly === 11, "8-player field should afford race-to-11 early rounds in 90 minutes, got " + smallFieldEarly);
+// Same field size but a very short event should fall back to 7.
+const smallFieldShortTime = E.dynamicRaceToForRound(s6, 1, 15);
+assert(smallFieldShortTime === 7, "8-player field with only 15 minutes should fall back to race-to-7, got " + smallFieldShortTime);
+// Semifinal/final are always 11/21 regardless of budget.
+assert(E.dynamicRaceToForRound(s6, 2, 15) === 11, "semifinal should stay race-to-11 even under a tight budget");
+assert(E.dynamicRaceToForRound(s6, 3, 15) === 21, "final should stay race-to-21 even under a tight budget");
+
+// --- Scenario 12: replay-bye (bring back an eliminated player instead of a free bye) ---
+let s7 = E.createDynamicState();
+["Win1", "Lose1"].forEach((n) => E.addPlayer(s7, n));
+E.scorePoint(s7, 1, 0, "A", 7); // Win1 beats Lose1, race to 7 (R=1 here means final actually race-to-21... use explicit score/lock instead)
+E.lockMatch(s7, 1, 0);
+let elig = E.eligibleForReplay(s7);
+assert(elig.length === 1 && elig[0].name === "Lose1", "Lose1 should be eligible for replay after being eliminated, got " + JSON.stringify(elig));
+E.addPlayer(s7, "Solo2");
+assert(s7.queue.length === 1, "Solo2 should be waiting alone");
+let replayRes = E.replayBye(s7, s7.queue[0].id, elig[0].id);
+assert(replayRes.ok, "replayBye should succeed: " + JSON.stringify(replayRes));
+assert(s7.queue.length === 0, "queue should be empty after replay pairing");
+const replayMatch = s7.matches.find((m) => m.round === 1 && m.status !== "abandoned" && m.status !== "locked");
+assert(replayMatch && ((replayMatch.playerA && replayMatch.playerA.name === "Solo2") || (replayMatch.playerB && replayMatch.playerB.name === "Solo2")), "Solo2 should be in a fresh match");
+assert(replayMatch && ((replayMatch.playerA && replayMatch.playerA.name === "Lose1") || (replayMatch.playerB && replayMatch.playerB.name === "Lose1")), "Lose1 should be paired in as Solo2's opponent");
 
 console.log("\nAll engine tests passed.");

@@ -60,20 +60,49 @@ request, this is the safety net), but it will refuse to unlock if a later
 round has already locked in a result that depended on this one; unlock that
 later match first.
 
-### Match lengths
+### Match lengths, deuce, and the sudden-death cap
 
 Match length scales automatically with how many people actually check in
-(not the interest-form count): the final is race-to-21, the semifinal is
-race-to-11, and every earlier round is race-to-7. It's driven off how many
-rounds the *current* field needs, so it adjusts live as people check in —
-see "How the bracket adapts" below if you want the exact rule.
+(not the interest-form count) and how much time you said you have when you
+created the tournament. The final is always race-to-21 and the semifinal is
+always race-to-11. Earlier rounds default to race-to-7, but if the field is
+small enough that race-to-11 for those rounds too would still plausibly fit
+your time budget, the app bumps them up to race-to-11 automatically. (This
+is a rough estimate off match count and an assumed pace — not a promise —
+see the constants at the top of the "time-budget" section in `engine.js` if
+you want to tune the assumption.)
+
+Real deuce rules apply automatically once you're scoring: you need a 2-point
+lead to win once you've hit the target (so at 6-6 in a race-to-7, it keeps
+going — first to lead by 2 wins, e.g. 8-6). To keep a deuce from running
+forever, each target has a sudden-death cap: once **both** players have
+reached it, the next point just wins outright:
+
+| Race to | Deuce cap (next point wins once both reach it) |
+|---|---|
+| 7 | 11 |
+| 11 | 21 |
+| 21 | 31 |
+
+The scoreboard applies this automatically — the match locks itself the
+moment the score is actually decided, and you'll get a quick toast telling
+you who won. You don't have to track the math yourself, and you still don't
+have to tap `+`/`−` in real time if you'd rather enter a final score after
+the fact — either way, it locks and advances the winner the moment the
+result is legitimate. The manual **Lock game** button still exists too, as
+an override for anything that doesn't fit the formula (a forfeit mid-game,
+a shortened casual game, etc.) — it only refuses a tied score.
 
 ### Check-in and removals
 
 Two players waiting with no match get paired automatically, in the order
 they were added. If there's an odd one out, a banner offers a **Give bye**
 button to auto-advance them once you're sure no one else is coming to pair
-with them.
+with them — or, if anyone's already been eliminated, a second option to
+bring one of them back to actually play the waiting person instead of
+handing out a free pass. That's a deliberate way to keep the bracket full
+of real matches (and give people more game time) when the numbers don't
+divide evenly, rather than defaulting to byes.
 
 Removing a player only works before their current match is played:
 
