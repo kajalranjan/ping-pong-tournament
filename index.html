@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ping Pong Tournament</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ============ HOME SCREEN ============ -->
+  <section id="screen-home" class="screen">
+    <header class="home-header">
+      <div>
+        <h1>Tournaments</h1>
+        <p class="subtle">Create a tournament for each event. Everything is saved in this browser.</p>
+      </div>
+      <button id="btn-new-tournament" class="btn btn-primary">New Tournament</button>
+    </header>
+    <div id="tournament-list" class="tournament-list"></div>
+  </section>
+
+  <!-- ============ CREATE TOURNAMENT MODAL ============ -->
+  <div id="modal-create" class="modal-overlay hidden">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2>New tournament</h2>
+        <button class="icon-btn" data-close-modal="modal-create" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field-label" for="input-tournament-name">Tournament name</label>
+        <input id="input-tournament-name" type="text" placeholder="e.g. Friday Ping Pong Night" class="text-input" />
+
+        <label class="field-label" for="input-preset-names">Interest form names <span class="subtle">(one per line — used only for the reference bracket)</span></label>
+        <textarea id="input-preset-names" rows="8" placeholder="Alex Kim&#10;Jordan Lee&#10;Sam Patel&#10;..." class="text-input textarea"></textarea>
+        <p class="hint" id="preset-count-hint">0 names</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close-modal="modal-create">Cancel</button>
+        <button id="btn-create-tournament" class="btn btn-primary">Create tournament</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TOURNAMENT SCREEN ============ -->
+  <section id="screen-tournament" class="screen hidden">
+    <header class="tournament-header">
+      <button id="btn-back-home" class="btn btn-ghost btn-sm">← All tournaments</button>
+      <h1 id="tournament-title">Tournament</h1>
+      <button id="btn-delete-tournament" class="btn btn-danger-ghost btn-sm">Delete</button>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="dynamic">Dynamic Bracket</button>
+      <button class="tab-btn" data-tab="checkin">Check-In</button>
+      <button class="tab-btn" data-tab="preset">Preset Bracket</button>
+    </nav>
+
+    <!-- Dynamic bracket tab -->
+    <div class="tab-panel active" data-panel="dynamic">
+      <div id="dynamic-bracket-empty" class="empty-state hidden">
+        <p>No one has checked in yet.</p>
+        <p class="subtle">Add names on the Check-In tab to start building the bracket.</p>
+      </div>
+      <div id="dynamic-bracket" class="bracket"></div>
+    </div>
+
+    <!-- Check-in tab -->
+    <div class="tab-panel" data-panel="checkin">
+      <div class="checkin-layout">
+        <div class="checkin-add card">
+          <label class="field-label" for="input-checkin-name">Add a player</label>
+          <form id="form-checkin" class="checkin-form">
+            <input id="input-checkin-name" type="text" placeholder="Player name" class="text-input" autocomplete="off" />
+            <button type="submit" class="btn btn-primary">Add</button>
+          </form>
+          <div id="bye-banner" class="bye-banner hidden">
+            <span id="bye-banner-text"></span>
+            <button id="btn-give-bye" class="btn btn-sm btn-secondary">Give bye</button>
+          </div>
+          <p class="hint" id="checkin-count-hint">0 checked in</p>
+        </div>
+        <div class="checkin-roster card">
+          <h3>Roster</h3>
+          <div id="roster-list" class="roster-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preset bracket tab -->
+    <div class="tab-panel" data-panel="preset">
+      <p class="subtle preset-note">Static reference bracket generated from the interest-form list at creation. Use this if the live bracket ever needs a backup.</p>
+      <div id="preset-bracket" class="bracket bracket-readonly"></div>
+    </div>
+  </section>
+
+  <!-- ============ SCORING MODAL ============ -->
+  <div id="modal-score" class="modal-overlay hidden">
+    <div class="modal-panel score-panel">
+      <div class="modal-header">
+        <div>
+          <div id="score-round-label" class="score-round-label">Round 1 · Race to 7</div>
+          <div id="score-status-badge" class="status-badge hidden"></div>
+        </div>
+        <button class="icon-btn" data-close-modal="modal-score" aria-label="Close">✕</button>
+      </div>
+
+      <div id="score-info-view" class="score-info-view hidden">
+        <p id="score-info-text"></p>
+      </div>
+
+      <div id="score-play-view" class="score-play-view">
+        <div class="split-screen">
+          <div class="score-side" id="side-a">
+            <div class="side-name" id="name-a">Player A</div>
+            <div class="side-score" id="value-a">0</div>
+            <div class="side-controls">
+              <button class="score-btn minus" data-side="A" data-delta="-1" aria-label="Decrease">−</button>
+              <button class="score-btn plus" data-side="A" data-delta="1" aria-label="Increase">+</button>
+            </div>
+          </div>
+          <div class="score-divider"></div>
+          <div class="score-side" id="side-b">
+            <div class="side-name" id="name-b">Player B</div>
+            <div class="side-score" id="value-b">0</div>
+            <div class="side-controls">
+              <button class="score-btn minus" data-side="B" data-delta="-1" aria-label="Decrease">−</button>
+              <button class="score-btn plus" data-side="B" data-delta="1" aria-label="Increase">+</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer score-footer">
+        <p id="lock-hint" class="hint hidden">Scores are tied — break the tie before locking.</p>
+        <button id="btn-lock-toggle" class="btn btn-primary">Lock game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ CONFIRM MODAL ============ -->
+  <div id="modal-confirm" class="modal-overlay hidden">
+    <div class="modal-panel" style="max-width: 380px;">
+      <div class="modal-header">
+        <h2 id="confirm-title">Are you sure?</h2>
+        <button class="icon-btn" data-close-modal="modal-confirm" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-message" class="subtle" style="margin:0;"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close-modal="modal-confirm">Cancel</button>
+        <button id="btn-confirm-action" class="btn btn-danger-ghost" style="background: var(--red); color: white; border-color: var(--red);">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
