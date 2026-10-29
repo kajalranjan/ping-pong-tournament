@@ -87,33 +87,25 @@
     return raceToForRound(match.round, totalRounds);
   }
 
-  // ---------- time-budget-aware race length for early rounds ----------
+  // ---------- headcount-based race length for early rounds ----------
   // Semifinal is always race-to-11 and the final is always race-to-21. The
   // "early" rounds (everything before the semifinal) default to race-to-7,
-  // but if the field is small enough that race-to-11 for those rounds too
-  // would still plausibly fit the event's time budget, use 11 instead.
-  // These are rough, clearly-an-estimate numbers, not a promise.
-  const SECONDS_PER_POINT = 15;
-  const CHANGEOVER_SECONDS = 45;
-  const DEFAULT_EVENT_MINUTES = 90;
-
-  function estimatedMatchSeconds(target) {
-    return CHANGEOVER_SECONDS + target * SECONDS_PER_POINT;
-  }
+  // but a small enough field can afford race-to-11 for those rounds too.
+  // "Small enough" is a simple, direct headcount cutoff: at the baseline
+  // event length, a field of 16 players or fewer gets race-to-11 early
+  // rounds; 17 or more falls back to race-to-7. The cutoff scales up or
+  // down with however much time you actually said the event has, so a
+  // shorter event tightens it and a longer one relaxes it.
+  const BASE_EARLY_ROUND_THRESHOLD_PLAYERS = 16;
+  const BASELINE_EVENT_MINUTES = 90;
 
   function chooseEarlyRoundTarget(state, eventMinutes) {
     const R = computeRounds(state);
     if (R < 3) return 7; // no separate "early" tier below semifinal/final
-    let earlyMatches = 0;
-    for (let r = 1; r <= R - 2; r++) earlyMatches += Math.pow(2, R - r);
-    const semiMatches = 2;
-    const finalMatches = 1;
-    const totalSecondsWith = (earlyTarget) =>
-      earlyMatches * estimatedMatchSeconds(earlyTarget) +
-      semiMatches * estimatedMatchSeconds(11) +
-      finalMatches * estimatedMatchSeconds(21);
-    const budgetSeconds = (eventMinutes || DEFAULT_EVENT_MINUTES) * 60;
-    return totalSecondsWith(11) <= budgetSeconds ? 11 : 7;
+    const totalPlayers = round1MatchCount(state) * 2;
+    const minutes = eventMinutes || BASELINE_EVENT_MINUTES;
+    const threshold = Math.round(BASE_EARLY_ROUND_THRESHOLD_PLAYERS * (minutes / BASELINE_EVENT_MINUTES));
+    return totalPlayers <= threshold ? 11 : 7;
   }
 
   function dynamicRaceToForRound(state, round, eventMinutes) {
